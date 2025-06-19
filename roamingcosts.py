@@ -48,3 +48,5 @@ if uploaded_file:
         )
     except Exception as e:
         st.error(f"An error occurred: {e}")
+
+# Run the app with: streamlit run code.py
