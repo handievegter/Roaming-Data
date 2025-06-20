@@ -1,8 +1,5 @@
 import streamlit as st
 st.set_page_config(page_title="Roaming Cost Aggregator", page_icon="💸")
-st.download_button(
-    label="🚀 Download cleaned Excel file"
-)
 
 import pandas as pd
 import numpy as np
@@ -155,9 +152,8 @@ if uploaded_file:
             download_file = to_excel(df_cleaned)
 
         st.success("File processed successfully. Download it below:")
-
         st.download_button(
-            label="Download cleaned Excel file",
+            label="🚀 Download cleaned Excel file",
             data=download_file,
             file_name="processed_roaming_cost.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
