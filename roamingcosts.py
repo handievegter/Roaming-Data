@@ -146,7 +146,7 @@ st.set_page_config(
 cut_off = st.number_input(
     "Cut-off for merging small totals",
     min_value=0,
-    value=20,
+    value=10,
     step=1,
     help="All values below this will be merged into larger ones or grouped if none are large."
 )
