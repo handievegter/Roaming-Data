@@ -1,23 +1,36 @@
 import streamlit as st
+st.set_page_config(page_title="Roaming Cost Aggregator", page_icon="💸")
+st.download_button(
+    label="🚀 Download cleaned Excel file"
+)
+
 import pandas as pd
+import numpy as np
 from io import BytesIO
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 import random
+
+import pandas as pd
 import numpy as np
+from io import BytesIO
+from openpyxl import load_workbook
+from openpyxl.styles import Font, PatternFill
+import random
 
 def clean_roaming_data(file, cut_off=20):
     xls = pd.ExcelFile(file)
     df = xls.parse("Call Gate June", skiprows=5)
 
-    # Rename columns
     df.columns = [
         "MSISDN", "Transporter", "VehicleReg",
         "CallsRoaming", "CallsData", "TotalExclVAT", "Old Total"
     ]
 
-    for col in ["CallsRoaming", "CallsData", "TotalExclVAT", "Old Total"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+    # Clean numeric columns, coercing errors to NaN
+    numeric_cols = ["CallsRoaming", "CallsData", "TotalExclVAT", "Old Total"]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
     df["New Total"] = df["Old Total"]
     df["TransporterGroup"] = df["Transporter"].str.replace(r"\s*BUP$", "", regex=True).str.strip()
@@ -39,21 +52,16 @@ def clean_roaming_data(file, cut_off=20):
                 if not candidates.empty:
                     target_idx = random.choice(candidates.index.tolist())
                     group.at[target_idx, "New Total"] += small_value
-                    group.at[target_idx, "Status"] = "added"
                     group.at[idx, "New Total"] = 0
-                    group.at[idx, "Status"] = "zeroed"
         else:
-            # No large values: consolidate all into one
             total_sum = group["Old Total"].sum()
             collector_idx = random.choice(group.index.tolist())
 
             for idx in group.index:
                 if idx == collector_idx:
                     group.at[idx, "New Total"] = total_sum
-                    group.at[idx, "Status"] = "collected"
                 else:
                     group.at[idx, "New Total"] = 0
-                    group.at[idx, "Status"] = "zeroed"
 
         group = group.drop(columns="TransporterGroup")
 
@@ -72,12 +80,15 @@ def clean_roaming_data(file, cut_off=20):
         result_rows.append(group)
         result_rows.append(pd.DataFrame([total_row]))
 
-        # Two empty spacer rows
         empty_row = pd.DataFrame([[""] * len(group.columns)] * 2, columns=group.columns)
         result_rows.append(empty_row)
 
     final_df = pd.concat(result_rows, ignore_index=True)
-    final_df["New Total"] = np.floor(final_df["New Total"] * 100) / 100  # round down to 2 decimals
+
+    # Round down New Total to 2 decimals safely
+    final_df["New Total"] = pd.to_numeric(final_df["New Total"], errors="coerce")
+    final_df["New Total"] = np.floor(final_df["New Total"] * 100) / 100
+    final_df["New Total"] = final_df["New Total"].fillna(0)
 
     return final_df
 
@@ -90,12 +101,11 @@ def to_excel(df):
     wb = load_workbook(output)
     ws = wb.active
 
-    # Define styles
+    # Styles
     bold_font = Font(bold=True)
     grey_fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
 
-    # Apply styling based on hidden "Status" column
-    # Apply styling only for Grand Total rows
+    # Apply only total row styling
     status_col_idx = list(df.columns).index("Status") + 1
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
         status = row[status_col_idx - 1].value
@@ -104,12 +114,11 @@ def to_excel(df):
                 cell.font = bold_font
                 cell.fill = grey_fill
 
-
-    # Delete the Status column
+    # Delete Status column
     ws.delete_cols(status_col_idx)
 
-    # Format MSISDN column (A) as number with no decimals
-    for cell in ws["A"][1:]:  # Skip header
+    # Format MSISDN column (A) as whole number
+    for cell in ws["A"][1:]:
         if isinstance(cell.value, (int, float)):
             cell.number_format = "0"
 
@@ -127,31 +136,26 @@ def to_excel(df):
     styled_output.seek(0)
     return styled_output
 
-# Streamlit UI
-st.title("Roaming Cost Processor")
-
-st.set_page_config(
-   page_title="Roaming Cost Processor",
-   page_icon="💸"
-)
-
+# --- Streamlit App ---
 
 cut_off = st.number_input(
     "Cut-off for merging small totals",
     min_value=0,
     value=10,
     step=1,
-    help="All values below this will be merged into larger ones or grouped if none are large."
+    help="All values below this will be merged into larger ones or consolidated into one."
 )
 
 uploaded_file = st.file_uploader("Upload raw Excel file", type=["xlsx"])
 
 if uploaded_file:
     try:
-        df_cleaned = clean_roaming_data(uploaded_file, cut_off)
+        with st.spinner("Processing file..."):
+            df_cleaned = clean_roaming_data(uploaded_file, cut_off)
+            download_file = to_excel(df_cleaned)
+
         st.success("File processed successfully. Download it below:")
 
-        download_file = to_excel(df_cleaned)
         st.download_button(
             label="Download cleaned Excel file",
             data=download_file,
@@ -160,3 +164,4 @@ if uploaded_file:
         )
     except Exception as e:
         st.error(f"An error occurred: {e}")
+
