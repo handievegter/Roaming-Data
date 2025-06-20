@@ -4,6 +4,7 @@ from io import BytesIO
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 import random
+import numpy as np
 
 def clean_roaming_data(file, cut_off=20):
     xls = pd.ExcelFile(file)
@@ -76,6 +77,8 @@ def clean_roaming_data(file, cut_off=20):
         result_rows.append(empty_row)
 
     final_df = pd.concat(result_rows, ignore_index=True)
+    final_df["New Total"] = np.floor(final_df["New Total"] * 100) / 100  # round down to 2 decimals
+
     return final_df
 
 def to_excel(df):
@@ -95,6 +98,7 @@ def to_excel(df):
     blue_fill = PatternFill(start_color="B3E5FC", end_color="B3E5FC", fill_type="solid")
 
     # Apply styling based on hidden "Status" column
+    # Apply styling only for Grand Total rows
     status_col_idx = list(df.columns).index("Status") + 1
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
         status = row[status_col_idx - 1].value
@@ -102,15 +106,7 @@ def to_excel(df):
             for cell in row:
                 cell.font = bold_font
                 cell.fill = grey_fill
-        elif status == "zeroed":
-            for cell in row:
-                cell.fill = red_fill
-        elif status == "added":
-            for cell in row:
-                cell.fill = green_fill
-        elif status == "collected":
-            for cell in row:
-                cell.fill = blue_fill
+
 
     # Delete the Status column
     ws.delete_cols(status_col_idx)
