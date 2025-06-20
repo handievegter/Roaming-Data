@@ -93,9 +93,6 @@ def to_excel(df):
     # Define styles
     bold_font = Font(bold=True)
     grey_fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
-    red_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
-    green_fill = PatternFill(start_color="CCFFCC", end_color="CCFFCC", fill_type="solid")
-    blue_fill = PatternFill(start_color="B3E5FC", end_color="B3E5FC", fill_type="solid")
 
     # Apply styling based on hidden "Status" column
     # Apply styling only for Grand Total rows
