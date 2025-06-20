@@ -137,6 +137,12 @@ def to_excel(df):
 # Streamlit UI
 st.title("Roaming Cost Processor")
 
+st.set_page_config(
+   page_title="Roaming Cost Processor",
+   page_icon="💸"
+)
+
+
 cut_off = st.number_input(
     "Cut-off for merging small totals",
     min_value=0,
