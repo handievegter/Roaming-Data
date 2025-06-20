@@ -6,6 +6,9 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 import random
 
+st.set_page_config(page_title="Roaming Cost Aggregator", page_icon="💸")
+
+
 # --- Helper function: spacing ---
 def add_vertical_space(lines=1):
     st.markdown("<br>" * lines, unsafe_allow_html=True)
