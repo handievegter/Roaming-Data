@@ -16,7 +16,8 @@ def add_vertical_space(lines=1):
 # --- Data cleaning function ---
 def clean_roaming_data(file, cut_off=20):
     xls = pd.ExcelFile(file)
-    df = xls.parse("Call Gate June", skiprows=5)
+    sheet_name = xls.sheet_names[0]
+    df = xls.parse(sheet_name, skiprows=5)
 
     df.columns = [
         "MSISDN", "Transporter", "VehicleReg",
