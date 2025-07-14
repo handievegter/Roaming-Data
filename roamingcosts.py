@@ -129,12 +129,12 @@ def to_excel(df):
 left, center, right = st.columns([1, 25, 1])
 
 with center:
-    st.title("💸Roaming Cost Aggregator💸")
+    st.title("💸Roaming Data Cost Aggregator💸")
 
     add_vertical_space(1)
 
     cut_off = st.number_input(
-        "Cut-off for merging small totals",
+        "Cut-Off Value",
         min_value=0,
         value=10,
         step=1,
