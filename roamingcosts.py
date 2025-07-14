@@ -126,10 +126,10 @@ def to_excel(df):
     return styled_output
 
 # --- App layout ---
-left, center, right = st.columns([1, 25, 1])
+left, center, right = st.columns([0.5, 100, 0.5])
 
 with center:
-    st.title("💸Roaming Data Cost Aggregator💸")
+    st.title("💸Roaming Cost Aggregator💸")
 
     add_vertical_space(1)
 
