@@ -5,6 +5,9 @@ from io import BytesIO
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 import random
+from typing import cast
+from openpyxl.worksheet.worksheet import Worksheet
+from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Roaming Data Cost Aggregator", page_icon="💸")
 
@@ -93,7 +96,9 @@ def to_excel(df):
 
     output.seek(0)
     wb = load_workbook(output)
-    ws = wb.active
+    ws = cast(Worksheet, wb.active)
+    if ws is None:
+        raise ValueError("No active worksheet found in the workbook.")
 
     bold_font = Font(bold=True)
     grey_fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
@@ -112,12 +117,14 @@ def to_excel(df):
         if isinstance(cell.value, (int, float)):
             cell.number_format = "0"
 
-    for col in ws.columns:
+    for col_idx in range(1, ws.max_column + 1):
+        col_letter = get_column_letter(col_idx)
         max_length = 0
-        col_letter = col[0].column_letter
-        for cell in col:
-            val = str(cell.value) if cell.value is not None else ""
-            max_length = max(max_length, len(val))
+        for col_cells in ws.iter_cols(min_col=col_idx, max_col=col_idx, min_row=1, max_row=ws.max_row):
+            for cell in col_cells:
+                val = str(cell.value) if cell.value is not None else ""
+                if len(val) > max_length:
+                    max_length = len(val)
         ws.column_dimensions[col_letter].width = max_length + 2
 
     styled_output = BytesIO()
