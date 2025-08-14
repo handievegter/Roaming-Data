@@ -4,7 +4,16 @@ import numpy as np
 from io import BytesIO
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 import random
+from typing import cast
+from openpyxl.worksheet.worksheet import Worksheet
+
+def round2(series_or_value):
+    return pd.to_numeric(series_or_value, errors="coerce").round(2)
+
+def floor2(series_or_value):
+    return np.floor(pd.to_numeric(series_or_value, errors="coerce") * 100) / 100
 
 st.set_page_config(page_title="Roaming Data Cost Aggregator", page_icon="💸")
 
@@ -15,24 +24,96 @@ def add_vertical_space(lines=1):
 
 # --- Data cleaning function ---
 def clean_roaming_data(file, cut_off=20):
-    xls = pd.ExcelFile(file)
+    xls = pd.ExcelFile(file, engine="openpyxl")
     sheet_name = xls.sheet_names[0]
     df = xls.parse(sheet_name, skiprows=5)
 
+    # Ensure the standardized 7 columns are present and aligned
+    if df.shape[1] < 7:
+        raise ValueError(f"Expected at least 7 columns after skipping headers; got {df.shape[1]}. Please verify the input format.")
+    df = df.iloc[:, :7]
     df.columns = [
         "MSISDN", "Transporter", "VehicleReg",
         "CallsRoaming", "CallsData", "TotalExclVAT", "Old Total"
     ]
+    # Ensure MSISDN is always string and stripped
+    df["MSISDN"] = df["MSISDN"].fillna("").astype(str).str.strip()
 
     numeric_cols = ["CallsRoaming", "CallsData", "TotalExclVAT", "Old Total"]
     for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).round(2)
 
     df["New Total"] = df["Old Total"]
+    # Normalize transporter and derive grouping key without trailing "BUP"
+    df["Transporter"] = df["Transporter"].fillna("").astype(str).str.strip()
     df["TransporterGroup"] = df["Transporter"].str.replace(r"\s*BUP$", "", regex=True).str.strip()
-    df["Status"] = ""
+    # df["Status"] = ""
+
+    # ------------------------------------------------------------
+    # Conditional pre-aggregation:
+    # Only merge rows when there are multiple VehicleReg values that
+    # share the same base (with BUP removed) AND at least one of them
+    # includes a trailing "BUP".
+    # ------------------------------------------------------------
+    df["VehicleReg"] = df["VehicleReg"].fillna("").astype(str).str.strip()
+    df["VehicleRegBase"] = df["VehicleReg"].str.replace(r"\s*BUP$", "", regex=True).str.strip()
+    df["HasBUP"] = df["VehicleReg"].str.contains(r"\s*BUP$", regex=True)
+    
+    rows = []
+    numeric_cols = ["CallsRoaming", "CallsData", "TotalExclVAT", "Old Total", "New Total"]
+    
+    for (tgrp, vbase), g in df.groupby(["TransporterGroup", "VehicleRegBase"], as_index=False):
+        if g.shape[0] >= 2 and g["HasBUP"].any():
+            # Prefer the MSISDN from the non-BUP vehicle (exact base reg)
+            msisdn_series_base = (
+                g.loc[~g["HasBUP"], "MSISDN"].astype(str).str.strip()
+            )
+            msisdn_base = msisdn_series_base[msisdn_series_base.ne("")].iloc[0] if not msisdn_series_base.empty and msisdn_series_base.ne("").any() else ""
+
+            # Fallback: first non-empty MSISDN from the whole group
+            if msisdn_base == "":
+                msisdn_series_any = g["MSISDN"].astype(str).str.strip()
+                non_empty = msisdn_series_any[msisdn_series_any.ne("")]
+                msisdn_base = non_empty.iloc[0] if not non_empty.empty else ""
+
+            # Merge into a single row using the base reg, summing numeric fields
+            summed = {col: round(float(g[col].sum()), 2) for col in numeric_cols}
+            rows.append({
+                "MSISDN": str(msisdn_base),
+                "Transporter": tgrp,               # normalize to group label
+                "VehicleReg": vbase,               # use base reg (no BUP)
+                "CallsRoaming": summed["CallsRoaming"],
+                "CallsData": summed["CallsData"],
+                "TotalExclVAT": summed["TotalExclVAT"],
+                "Old Total": summed["Old Total"],
+                "New Total": summed["Old Total"],
+                # "Status": "",
+                "TransporterGroup": tgrp
+            })
+        else:
+            # Keep original rows (no merge). Normalize Transporter to group label.
+            for _, r in g.iterrows():
+                rows.append({
+                    "MSISDN": str(r.get("MSISDN", "")),
+                    "Transporter": tgrp,             # normalize to group label
+                    "VehicleReg": r["VehicleReg"],   # keep original (may include BUP)
+                    "CallsRoaming": round(float(r["CallsRoaming"]), 2),
+                    "CallsData": round(float(r["CallsData"]), 2),
+                    "TotalExclVAT": round(float(r["TotalExclVAT"]), 2),
+                    "Old Total": round(float(r["Old Total"]), 2),
+                    "New Total": round(float(r["New Total"]), 2),
+                    # "Status": "",
+                    "TransporterGroup": tgrp
+                })
+    
+    df = pd.DataFrame(rows, columns=[
+        "MSISDN", "Transporter", "VehicleReg",
+        "CallsRoaming", "CallsData", "TotalExclVAT",
+        "Old Total", "New Total", "TransporterGroup"
+    ])
 
     result_rows = []
+    totals_rows = []
 
     for transporter, group in df.groupby("TransporterGroup"):
         group = group.copy().sort_values(by="VehicleReg").reset_index(drop=True)
@@ -41,18 +122,25 @@ def clean_roaming_data(file, cut_off=20):
         is_large = (group["Old Total"] >= cut_off)
 
         if is_large.any():
-            for idx in group[is_small].index:
-                small_value = group.at[idx, "Old Total"]
-                candidates = group[is_large & (group.index != idx)]
-
-                if not candidates.empty:
-                    target_idx = random.choice(candidates.index.tolist())
-                    group.at[target_idx, "New Total"] += small_value
+            small_idxs = group[is_small].index.tolist()
+            if small_idxs:
+                candidate_idxs = group[is_large].index.tolist()
+                for idx in small_idxs:
+                    # Choose a target from large candidates (excluding self if applicable)
+                    valid_targets = [i for i in candidate_idxs if i != idx]
+                    if not valid_targets:
+                        continue
+                    target_idx = random.choice(valid_targets)
+                    group.at[target_idx, "New Total"] += group.at[idx, "Old Total"]
                     group.at[idx, "New Total"] = 0
         else:
+            if group.empty:
+                continue
             total_sum = group["Old Total"].sum()
-            collector_idx = random.choice(group.index.tolist())
-
+            collector_candidates = group.index.tolist()
+            if not collector_candidates:
+                continue
+            collector_idx = random.choice(collector_candidates)
             for idx in group.index:
                 if idx == collector_idx:
                     group.at[idx, "New Total"] = total_sum
@@ -61,6 +149,26 @@ def clean_roaming_data(file, cut_off=20):
 
         group = group.drop(columns="TransporterGroup")
 
+        # Floor per‑row New Total to 2 decimals BEFORE computing totals
+        group["New Total"] = pd.to_numeric(group["New Total"], errors="coerce")
+        group["New Total"] = np.floor(group["New Total"] * 100) / 100
+
+        for c in ["CallsRoaming", "CallsData", "TotalExclVAT", "Old Total"]:
+            group[c] = pd.to_numeric(group[c], errors="coerce").round(2)
+
+        # Compute and store totals for this transporter group based on floored per‑row values
+        total_old = group["Old Total"].sum()
+        total_new = group["New Total"].sum()
+        totals_rows.append({
+            "Transporter": transporter,
+            "Old Total": total_old,
+            "New Total": total_new
+        })
+
+        # Append the group's rows
+        result_rows.append(group)
+
+        # Append a visible Grand Total row to the main sheet
         total_row = {
             "MSISDN": "",
             "Transporter": f"{transporter} - Grand Total",
@@ -68,20 +176,29 @@ def clean_roaming_data(file, cut_off=20):
             "CallsRoaming": "",
             "CallsData": "",
             "TotalExclVAT": "",
-            "Old Total": group["Old Total"].sum(),
-            "New Total": group["New Total"].sum(),
-            "Status": "total"
+            "Old Total": total_old,
+            "New Total": total_new,
+            # "Status": "total"
         }
-
-        result_rows.append(group)
         result_rows.append(pd.DataFrame([total_row]))
+
+        # Add two spacer rows, with New Total set to NaN so Excel ignores them in sums
         empty_row = pd.DataFrame([[""] * len(group.columns)] * 2, columns=group.columns)
+        empty_row["New Total"] = np.nan
         result_rows.append(empty_row)
 
     final_df = pd.concat(result_rows, ignore_index=True)
     final_df["New Total"] = pd.to_numeric(final_df["New Total"], errors="coerce")
     final_df["New Total"] = np.floor(final_df["New Total"] * 100) / 100
-    final_df["New Total"] = final_df["New Total"].fillna(0)
+
+    for c in ["CallsRoaming", "CallsData", "TotalExclVAT", "Old Total"]:
+        final_df[c] = pd.to_numeric(final_df[c], errors="coerce").round(2)
+
+    # Blank out "New Total" for spacer rows between transporters
+    spacer_mask = final_df["Transporter"].astype(str).str.strip().eq("")
+    final_df.loc[spacer_mask, "New Total"] = ""
+
+    # Do not floor or round "Old Total" anywhere; leave as-is.
 
     return final_df
 
@@ -93,32 +210,50 @@ def to_excel(df):
 
     output.seek(0)
     wb = load_workbook(output)
-    ws = wb.active
+    ws = cast(Worksheet, wb.active)
+    if ws is None:
+        raise ValueError("No active worksheet found in the workbook.")
+
+    # Map headers to column indices
+    header_map = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
+
+    msisdn_idx = header_map.get("MSISDN")
+    if msisdn_idx:
+        for col in ws.iter_cols(min_col=msisdn_idx, max_col=msisdn_idx, min_row=2, max_row=ws.max_row):
+            for c in col:
+                c.number_format = "@"
 
     bold_font = Font(bold=True)
-    grey_fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
+    grey_fill = PatternFill(start_color="00DDDDDD", end_color="00DDDDDD", fill_type="solid")
 
-    status_col_idx = list(df.columns).index("Status") + 1
-    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
-        status = row[status_col_idx - 1].value
-        if status == "total":
-            for cell in row:
-                cell.font = bold_font
-                cell.fill = grey_fill
+    # Style rows where Transporter ends with " - Grand Total"
+    transporter_idx = header_map.get("Transporter")
+    if transporter_idx:
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            tval = row[transporter_idx - 1].value
+            if isinstance(tval, str) and tval.endswith(" - Grand Total"):
+                for cell in row:
+                    cell.font = bold_font
+                    cell.fill = grey_fill
 
-    ws.delete_cols(status_col_idx)
+    # Apply number formats to specific numeric columns (2 decimals)
+    for col_name in ["Old Total", "New Total", "TotalExclVAT", "CallsRoaming", "CallsData"]:
+      col_idx = header_map.get(col_name)
+      if col_idx:
+          for cell in ws.iter_cols(min_col=col_idx, max_col=col_idx, min_row=2, max_row=ws.max_row):
+              for c in cell:
+                  if isinstance(c.value, (int, float)):
+                      c.number_format = "0.00"
 
-    for cell in ws["A"][1:]:
-        if isinstance(cell.value, (int, float)):
-            cell.number_format = "0"
-
-    for col in ws.columns:
+    for col_idx in range(1, ws.max_column + 1):
+        col_letter = get_column_letter(col_idx)
         max_length = 0
-        col_letter = col[0].column_letter
-        for cell in col:
-            val = str(cell.value) if cell.value is not None else ""
-            max_length = max(max_length, len(val))
-        ws.column_dimensions[col_letter].width = max_length + 2
+        for col_cells in ws.iter_cols(min_col=col_idx, max_col=col_idx, min_row=1, max_row=ws.max_row):
+            for cell in col_cells:
+                val = str(cell.value) if cell.value is not None else ""
+                if len(val) > max_length:
+                    max_length = len(val)
+        ws.column_dimensions[col_letter].width = min(max_length + 2, 60)
 
     styled_output = BytesIO()
     wb.save(styled_output)
