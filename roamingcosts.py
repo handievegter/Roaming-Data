@@ -1,18 +1,32 @@
-import sys, openpyxl, streamlit
+import sys
 import pandas as pd
 import streamlit as st
+import numpy as np
+from io import BytesIO
+import random
+from typing import cast
+
+# Try importing openpyxl and fail gracefully on Cloud if it's missing
+try:
+    import openpyxl  # noqa: F401
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.worksheet.worksheet import Worksheet
+    from openpyxl.utils import get_column_letter
+except Exception as e:
+    st.error(
+        "Failed to import 'openpyxl'. This usually means the deployed environment didn't install it. "
+        "Please pin dependencies in requirements.txt (e.g. pandas==2.2.3, openpyxl==3.1.5, streamlit==1.36.0) "
+        "and clear the app cache to rebuild."
+    )
+    st.stop()
+
+# Show versions in sidebar for debugging
 st.sidebar.write("Python:", sys.version)
 st.sidebar.write("pandas:", pd.__version__)
 st.sidebar.write("openpyxl:", openpyxl.__version__)
-st.sidebar.write("streamlit:", streamlit.__version__)
-import numpy as np
-from io import BytesIO
-from openpyxl import load_workbook
-from openpyxl.styles import Font, PatternFill
-import random
-from typing import cast
-from openpyxl.worksheet.worksheet import Worksheet
-from openpyxl.utils import get_column_letter
+import streamlit as _st_mod  # to show the installed version string reliably
+st.sidebar.write("streamlit:", _st_mod.__version__)
 
 st.set_page_config(page_title="Roaming Data Cost Aggregator", page_icon="💸")
 
@@ -23,7 +37,7 @@ def add_vertical_space(lines=1):
 
 # --- Data cleaning function ---
 def clean_roaming_data(file, cut_off=20):
-    xls = pd.ExcelFile(file)
+    xls = pd.ExcelFile(file, engine="openpyxl")
     sheet_name = xls.sheet_names[0]
     df = xls.parse(sheet_name, skiprows=5)
 
