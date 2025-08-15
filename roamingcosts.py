@@ -1,5 +1,10 @@
-import streamlit as st 
+import sys, openpyxl, streamlit
 import pandas as pd
+import streamlit as st
+st.sidebar.write("Python:", sys.version)
+st.sidebar.write("pandas:", pd.__version__)
+st.sidebar.write("openpyxl:", openpyxl.__version__)
+st.sidebar.write("streamlit:", streamlit.__version__)
 import numpy as np
 from io import BytesIO
 from openpyxl import load_workbook
